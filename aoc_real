@@ -1,0 +1,3 @@
+#!/bin/bash
+
+aoc -profile=all device/input.cl -o bin/input.aocx -report

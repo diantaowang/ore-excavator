@@ -1,0 +1,9 @@
+#!/bin/bash
+
+mv ./device/input.cl        ./device/input_t.cl
+mv ./device/old_input.cl    ./device/input.cl
+mv ./device/input_t.cl      ./device/old_input.cl
+
+mv ./host/src/main.c        ./host/src/main_t
+mv ./host/src/old_main.c~   ./host/src/main.c
+mv ./host/src/main_t        ./host/src/old_main.c~

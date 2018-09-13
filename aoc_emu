@@ -1,0 +1,3 @@
+#!/bin/bash
+
+aoc -march=emulator device/input.cl -o emu-bin/input.aocx
