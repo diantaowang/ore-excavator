@@ -789,6 +789,8 @@ uint32_t verify_sols(cl_command_queue queue, cl_mem buf_sols, uint64_t *nonce,
     kern_avg_run_time = kern_avg_run_time * 6.0 / 10.0 + delta * (4.0 / 10.0);
     kern_avg_run_time *= (1 - (double)SLEEP_SKIP_RATIO);*/
     // let's check these solutions we just read...
+    for (uint i = 0; i < sols->nr; ++i)
+        sols->valid[i] = 1;
     if (sols->nr > MAX_SOLS) {
 	    fprintf(stderr, "%d (probably invalid) solutions were dropped!\n",
 		    sols->nr - MAX_SOLS);
@@ -806,7 +808,7 @@ uint32_t verify_sols(cl_command_queue queue, cl_mem buf_sols, uint64_t *nonce,
 	    fprintf(stderr, "Nonce %s: %d sol%s\n",
 		        s_hexdump(nonce, ZCASH_NONCE_LEN), nr_valid_sols,
 		        nr_valid_sols == 1 ? "" : "s");
-    debug("Stats: %d likely invalids\n", sols->likely_invalids);
+    // debug("Stats: %d likely invalids\n", sols->likely_invalids);
     free(sols);
     return nr_valid_sols;
 }
@@ -898,24 +900,39 @@ uint32_t solve_equihash(cl_context ctx, cl_command_queue queue,
         examine_hashtable(round, queue, buf_ht[round % 2], 8);
         examine_rowCounters(round, queue, rowCounters[round % 2]);
     }
+
+    // test point //////////////////////////////////////////////////
     uint counter = 0;
     cl_mem buf_counter = check_clCreateBuffer(ctx, CL_MEM_READ_ONLY |
             CL_MEM_COPY_HOST_PTR, sizeof(counter), &counter);
+    uint sols_counter = 0;
+    cl_mem buf_sols_counter = check_clCreateBuffer(ctx, CL_MEM_READ_ONLY |
+            CL_MEM_COPY_HOST_PTR, sizeof(sols_counter), &buf_sols_counter);
+    ////////////////////////////////////////////////////////////////
+    
     check_clSetKernelArg(k_sols, 0, &buf_ht[0]);
     check_clSetKernelArg(k_sols, 1, &buf_ht[1]);
     check_clSetKernelArg(k_sols, 2, &buf_sols);
     check_clSetKernelArg(k_sols, 3, &rowCounters[0]);
     check_clSetKernelArg(k_sols, 4, &buf_counter);
+    check_clSetKernelArg(k_sols, 5, &buf_sols_counter);
     check_clEnqueueNDRangeKernel(queue, k_sols, 1, NULL,
 	        &global_ws, &local_work_size, 0, NULL, NULL);
 
-    // compute the expected run time of the kernels that have been queued
+    // test point //////////////////////////////////////////////////
     cl_event readEvent;
     check_clEnqueueReadBuffer(queue, buf_counter, CL_FALSE, 0, 
             sizeof(uint32_t), &counter, 0, NULL, &readEvent);
     clWaitForEvents(1, &readEvent);
-    printf("\n---------------------------------\nCounter: %d\n", counter);
+    cl_event readEvent2;
+    check_clEnqueueReadBuffer(queue, buf_sols_counter, CL_FALSE, 0, 
+            sizeof(uint32_t), &sols_counter, 0, NULL, &readEvent2);
+    clWaitForEvents(1, &readEvent2);
+    printf("\n---------------------------------\nCounter: %d   Sols num: %d\n", counter, sols_counter);
     printf("\n---------------------------------\n");
+    ////////////////////////////////////////////////////////////////
+
+    // compute the expected run time of the kernels that have been queued
     struct timespec start_time, target_time;
     get_time(&start_time);
     double dstart, dtarget = 0;

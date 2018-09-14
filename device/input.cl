@@ -269,9 +269,6 @@ void kernel_round(__global uint * restrict roundNum,
     for (uint i = 0; i < (1 << 17); ++i)
         rowCsDst[i] = 0;
 
-    // #pragma ivdep array(rowHash)
-    // #pragma ivdep array(rowCsDst)
-    // #pragma ivdep array(ht_dst)
     #pragma ivdep
     for (uint tid = 0; tid < (1 << 20); ) {
         if (load) {
@@ -359,17 +356,11 @@ void kernel_round(__global uint * restrict roundNum,
                     uint rowOffset = BITS_PER_ROW * (row & 0x7);
                     uint xcnt = atom_add(rowCsDst + rowIdx, 1 << rowOffset);
                     uint cnt = (xcnt >> rowOffset) & ROW_MASK;
-                    ulong4 oldColl;
+                    ulong4 oldColl = 0;
                     uint htOffset = row * NR_SLOTS + cnt;
                     if (round != 1 && round != 2)
                         oldColl = ht_dst[htOffset];
-                    if (round == 2) {
-                        // collision.s0 is useless data.
-                        collision.s0 = 0;
-                        collision.s1 = (collResult.s1 & 0xffffffff00000000) | newIndex;
-                        collision.s2 = collResult.s2;
-                        collision.s3 = collResult.s3;
-                    } else if (round == 3) {
+                    if (round == 2 || round == 3) {
                         collision.s0 = oldColl.s0;
                         collision.s1 = (collResult.s1 & 0xffffffff00000000) | newIndex;
                         collision.s2 = collResult.s2;
@@ -424,7 +415,7 @@ void kernel_round(__global uint * restrict roundNum,
 }
 
 void potential_sol(__global ulong ** restrict htabs, __global sols_t * restrict sols,
-        uint ref0, uint ref1)
+        uint ref0, uint ref1, uint * sols_nr, uint * real_sols_nr)
 {
     uint    values_tmp[1 << PARAM_K];
     uint    nr_value;
@@ -528,13 +519,15 @@ void potential_sol(__global ulong ** restrict htabs, __global sols_t * restrict 
     if (dup_value)
         return ;
 
-    uint sol_i = sols->nr;
-    sols->nr = sol_i + 1;
+    // test point
+    ++ (*real_sols_nr);
+
+    uint sol_i = *sols_nr;
+    *sols_nr = sol_i + 1;
     if (sol_i >= MAX_SOLS)
         return ;
     for (uint i = 0; i < (1 << PARAM_K); ++i)
         sols->values[sol_i][i] = values_tmp[i];
-    sols->valid[sol_i] = 1;
 }
 
 __kernel __attribute__((reqd_work_group_size(1, 1, 1)))
@@ -542,7 +535,8 @@ void kernel_sols(__global ulong * restrict ht0,
         __global ulong * restrict ht1, 
         __global sols_t * restrict sols,
         __global uint * restrict rowCountersSrc,
-        __global uint * restrict counter)
+        __global uint * restrict counter,
+        __global uint * restrict vaild_counter)
 {
     __global ulong  *htabs[2] = { ht0, ht1 };
 
@@ -559,8 +553,6 @@ void kernel_sols(__global ulong * restrict ht0,
     uint    tups_num = 0;
     bool    store;
     uint    collNum = 0;
-
-    sols->nr = sols->likely_invalids = 0;
     
     #pragma unroll 16
     for (uint i = 0; i < (1 << 17); ++i)
@@ -600,7 +592,7 @@ void kernel_sols(__global ulong * restrict ht0,
                 if (load_j == cnt - 1) {
                     ++load_i;
                     load_j = load_i + 1;
-                } else{
+                } else {
                     ++load_j;
                 }
             }
@@ -613,10 +605,18 @@ void kernel_sols(__global ulong * restrict ht0,
             ++tid;
         }
     }
-    
+
+    // test point 
     *counter = collNum;
+    uint real_sols_nr = 0;
+
+    uint sols_nr = 0;
     for (uint i = 0; i < tups_num; ++i)
-        potential_sol(htabs, sols, tuples[i][0], tuples[i][1]);
+        potential_sol(htabs, sols, tuples[i][0], tuples[i][1], &sols_nr, &real_sols_nr);
+    sols->nr = sols_nr;
+
+    // test point
+    *vaild_counter = real_sols_nr;
 }
 
 
