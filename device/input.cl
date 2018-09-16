@@ -3,10 +3,10 @@
 #pragma OPENCL EXTENSION cl_khr_local_int32_base_atomics : enable
 
 __constant ulong blake_iv[] = {
-	0x6a09e667f3bcc908, 0xbb67ae8584caa73b,
-	0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
-	0x510e527fade682d1, 0x9b05688c2b3e6c1f,
-	0x1f83d9abfb41bd6b, 0x5be0cd19137e2179,
+    0x6a09e667f3bcc908, 0xbb67ae8584caa73b,
+    0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
+    0x510e527fade682d1, 0x9b05688c2b3e6c1f,
+    0x1f83d9abfb41bd6b, 0x5be0cd19137e2179,
 };
 
 #define mix(va, vb, vc, vd, x, y) \
@@ -25,10 +25,10 @@ void kernel_round0(__global ulong * restrict blake_state,
         __global uint   * restrict rowCounters, 
         __global uint   * restrict debug)
 {
-	uint            input_end = 1 << 21;
-	uint            dropped = 0;
+    uint            input_end = 1 << 21;
+    uint            dropped = 0;
     ulong           blake_state_reg[8];
-	ulong           v[16];
+    ulong           v[16];
     __local  uint   rowCsSrc[1 << 17];   
 
     for (uint i = 0; i < (1 << 17); ++i)
@@ -41,153 +41,153 @@ void kernel_round0(__global ulong * restrict blake_state,
     #pragma unroll 1
     #pragma ivdep array(ht)
     #pragma ivdep array(rowCsSrc)
-	for (uint input = 0; input < input_end; ++input) {
-		// shift "i" to occupy the high 32 bits of the second ulong word in the
-		// message block
+    for (uint input = 0; input < input_end; ++input) {
+        // shift "i" to occupy the high 32 bits of the second ulong word in the
+        // message block
         ulong word1 = (ulong) (input >> 1) << 32;
-		// init vector v
-		v[0] = blake_state_reg[0];
-		v[1] = blake_state_reg[1];
-		v[2] = blake_state_reg[2];
-		v[3] = blake_state_reg[3];
-		v[4] = blake_state_reg[4];
-		v[5] = blake_state_reg[5];
-		v[6] = blake_state_reg[6];
-		v[7] = blake_state_reg[7];
-		v[8] = blake_iv[0];
-		v[9] = blake_iv[1];
-		v[10] = blake_iv[2];
-		v[11] = blake_iv[3];
-		v[12] = blake_iv[4];
-		v[13] = blake_iv[5];
-		v[14] = blake_iv[6];
-		v[15] = blake_iv[7];
-		// mix in length of data
-		v[12] ^= ZCASH_BLOCK_HEADER_LEN + 4 /* length of "i" */ ;
-		// last block
-		v[14] ^= (ulong) - 1;
+        // init vector v
+        v[0] = blake_state_reg[0];
+        v[1] = blake_state_reg[1];
+        v[2] = blake_state_reg[2];
+        v[3] = blake_state_reg[3];
+        v[4] = blake_state_reg[4];
+        v[5] = blake_state_reg[5];
+        v[6] = blake_state_reg[6];
+        v[7] = blake_state_reg[7];
+        v[8] = blake_iv[0];
+        v[9] = blake_iv[1];
+        v[10] = blake_iv[2];
+        v[11] = blake_iv[3];
+        v[12] = blake_iv[4];
+        v[13] = blake_iv[5];
+        v[14] = blake_iv[6];
+        v[15] = blake_iv[7];
+        // mix in length of data
+        v[12] ^= ZCASH_BLOCK_HEADER_LEN + 4 /* length of "i" */ ;
+        // last block
+        v[14] ^= (ulong) - 1;
 
-		// round 1
-		mix(v[0], v[4], v[8],  v[12], 0, word1);
-		mix(v[1], v[5], v[9],  v[13], 0, 0);
-		mix(v[2], v[6], v[10], v[14], 0, 0);
-		mix(v[3], v[7], v[11], v[15], 0, 0);
-		mix(v[0], v[5], v[10], v[15], 0, 0);
-		mix(v[1], v[6], v[11], v[12], 0, 0);
-		mix(v[2], v[7], v[8],  v[13], 0, 0);
-		mix(v[3], v[4], v[9],  v[14], 0, 0);
-		// round 2
-		mix(v[0], v[4], v[8],  v[12], 0, 0);
-		mix(v[1], v[5], v[9],  v[13], 0, 0);
-		mix(v[2], v[6], v[10], v[14], 0, 0);
-		mix(v[3], v[7], v[11], v[15], 0, 0);
-		mix(v[0], v[5], v[10], v[15], word1, 0);
-		mix(v[1], v[6], v[11], v[12], 0, 0);
-		mix(v[2], v[7], v[8],  v[13], 0, 0);
-		mix(v[3], v[4], v[9],  v[14], 0, 0);
-		// round 3
-		mix(v[0], v[4], v[8],  v[12], 0, 0);
-		mix(v[1], v[5], v[9],  v[13], 0, 0);
-		mix(v[2], v[6], v[10], v[14], 0, 0);
-		mix(v[3], v[7], v[11], v[15], 0, 0);
-		mix(v[0], v[5], v[10], v[15], 0, 0);
-		mix(v[1], v[6], v[11], v[12], 0, 0);
-		mix(v[2], v[7], v[8],  v[13], 0, word1);
-		mix(v[3], v[4], v[9],  v[14], 0, 0);
-		// round 4
-		mix(v[0], v[4], v[8],  v[12], 0, 0);
-		mix(v[1], v[5], v[9],  v[13], 0, word1);
-		mix(v[2], v[6], v[10], v[14], 0, 0);
-		mix(v[3], v[7], v[11], v[15], 0, 0);
-		mix(v[0], v[5], v[10], v[15], 0, 0);
-		mix(v[1], v[6], v[11], v[12], 0, 0);
-		mix(v[2], v[7], v[8],  v[13], 0, 0);
-		mix(v[3], v[4], v[9],  v[14], 0, 0);
-		// round 5
-		mix(v[0], v[4], v[8],  v[12], 0, 0);
-		mix(v[1], v[5], v[9],  v[13], 0, 0);
-		mix(v[2], v[6], v[10], v[14], 0, 0);
-		mix(v[3], v[7], v[11], v[15], 0, 0);
-		mix(v[0], v[5], v[10], v[15], 0, word1);
-		mix(v[1], v[6], v[11], v[12], 0, 0);
-		mix(v[2], v[7], v[8],  v[13], 0, 0);
-		mix(v[3], v[4], v[9],  v[14], 0, 0);
-		// round 6
-		mix(v[0], v[4], v[8],  v[12], 0, 0);
-		mix(v[1], v[5], v[9],  v[13], 0, 0);
-		mix(v[2], v[6], v[10], v[14], 0, 0);
-		mix(v[3], v[7], v[11], v[15], 0, 0);
-		mix(v[0], v[5], v[10], v[15], 0, 0);
-		mix(v[1], v[6], v[11], v[12], 0, 0);
-		mix(v[2], v[7], v[8],  v[13], 0, 0);
-		mix(v[3], v[4], v[9],  v[14], word1, 0);
-		// round 7
-		mix(v[0], v[4], v[8],  v[12], 0, 0);
-		mix(v[1], v[5], v[9],  v[13], word1, 0);
-		mix(v[2], v[6], v[10], v[14], 0, 0);
-		mix(v[3], v[7], v[11], v[15], 0, 0);
-		mix(v[0], v[5], v[10], v[15], 0, 0);
-		mix(v[1], v[6], v[11], v[12], 0, 0);
-		mix(v[2], v[7], v[8],  v[13], 0, 0);
-		mix(v[3], v[4], v[9],  v[14], 0, 0);
-		// round 8
-		mix(v[0], v[4], v[8],  v[12], 0, 0);
-		mix(v[1], v[5], v[9],  v[13], 0, 0);
-		mix(v[2], v[6], v[10], v[14], 0, word1);
-		mix(v[3], v[7], v[11], v[15], 0, 0);
-		mix(v[0], v[5], v[10], v[15], 0, 0);
-		mix(v[1], v[6], v[11], v[12], 0, 0);
-		mix(v[2], v[7], v[8],  v[13], 0, 0);
-		mix(v[3], v[4], v[9],  v[14], 0, 0);
-		// round 9
-		mix(v[0], v[4], v[8],  v[12], 0, 0);
-		mix(v[1], v[5], v[9],  v[13], 0, 0);
-		mix(v[2], v[6], v[10], v[14], 0, 0);
-		mix(v[3], v[7], v[11], v[15], 0, 0);
-		mix(v[0], v[5], v[10], v[15], 0, 0);
-		mix(v[1], v[6], v[11], v[12], 0, 0);
-		mix(v[2], v[7], v[8],  v[13], word1, 0);
-		mix(v[3], v[4], v[9],  v[14], 0, 0);
-		// round 10
-		mix(v[0], v[4], v[8],  v[12], 0, 0);
-		mix(v[1], v[5], v[9],  v[13], 0, 0);
-		mix(v[2], v[6], v[10], v[14], 0, 0);
-		mix(v[3], v[7], v[11], v[15], word1, 0);
-		mix(v[0], v[5], v[10], v[15], 0, 0);
-		mix(v[1], v[6], v[11], v[12], 0, 0);
-		mix(v[2], v[7], v[8],  v[13], 0, 0);
-		mix(v[3], v[4], v[9],  v[14], 0, 0);
-		// round 11
-		mix(v[0], v[4], v[8],  v[12], 0, word1);
-		mix(v[1], v[5], v[9],  v[13], 0, 0);
-		mix(v[2], v[6], v[10], v[14], 0, 0);
-		mix(v[3], v[7], v[11], v[15], 0, 0);
-		mix(v[0], v[5], v[10], v[15], 0, 0);
-		mix(v[1], v[6], v[11], v[12], 0, 0);
-		mix(v[2], v[7], v[8],  v[13], 0, 0);
-		mix(v[3], v[4], v[9],  v[14], 0, 0);
-		// round 12
-		mix(v[0], v[4], v[8],  v[12], 0, 0);
-		mix(v[1], v[5], v[9],  v[13], 0, 0);
-		mix(v[2], v[6], v[10], v[14], 0, 0);
-		mix(v[3], v[7], v[11], v[15], 0, 0);
-		mix(v[0], v[5], v[10], v[15], word1, 0);
-		mix(v[1], v[6], v[11], v[12], 0, 0);
-		mix(v[2], v[7], v[8],  v[13], 0, 0);
-		mix(v[3], v[4], v[9],  v[14], 0, 0);
+        // round 1
+        mix(v[0], v[4], v[8],  v[12], 0, word1);
+        mix(v[1], v[5], v[9],  v[13], 0, 0);
+        mix(v[2], v[6], v[10], v[14], 0, 0);
+        mix(v[3], v[7], v[11], v[15], 0, 0);
+        mix(v[0], v[5], v[10], v[15], 0, 0);
+        mix(v[1], v[6], v[11], v[12], 0, 0);
+        mix(v[2], v[7], v[8],  v[13], 0, 0);
+        mix(v[3], v[4], v[9],  v[14], 0, 0);
+        // round 2
+        mix(v[0], v[4], v[8],  v[12], 0, 0);
+        mix(v[1], v[5], v[9],  v[13], 0, 0);
+        mix(v[2], v[6], v[10], v[14], 0, 0);
+        mix(v[3], v[7], v[11], v[15], 0, 0);
+        mix(v[0], v[5], v[10], v[15], word1, 0);
+        mix(v[1], v[6], v[11], v[12], 0, 0);
+        mix(v[2], v[7], v[8],  v[13], 0, 0);
+        mix(v[3], v[4], v[9],  v[14], 0, 0);
+        // round 3
+        mix(v[0], v[4], v[8],  v[12], 0, 0);
+        mix(v[1], v[5], v[9],  v[13], 0, 0);
+        mix(v[2], v[6], v[10], v[14], 0, 0);
+        mix(v[3], v[7], v[11], v[15], 0, 0);
+        mix(v[0], v[5], v[10], v[15], 0, 0);
+        mix(v[1], v[6], v[11], v[12], 0, 0);
+        mix(v[2], v[7], v[8],  v[13], 0, word1);
+        mix(v[3], v[4], v[9],  v[14], 0, 0);
+        // round 4
+        mix(v[0], v[4], v[8],  v[12], 0, 0);
+        mix(v[1], v[5], v[9],  v[13], 0, word1);
+        mix(v[2], v[6], v[10], v[14], 0, 0);
+        mix(v[3], v[7], v[11], v[15], 0, 0);
+        mix(v[0], v[5], v[10], v[15], 0, 0);
+        mix(v[1], v[6], v[11], v[12], 0, 0);
+        mix(v[2], v[7], v[8],  v[13], 0, 0);
+        mix(v[3], v[4], v[9],  v[14], 0, 0);
+        // round 5
+        mix(v[0], v[4], v[8],  v[12], 0, 0);
+        mix(v[1], v[5], v[9],  v[13], 0, 0);
+        mix(v[2], v[6], v[10], v[14], 0, 0);
+        mix(v[3], v[7], v[11], v[15], 0, 0);
+        mix(v[0], v[5], v[10], v[15], 0, word1);
+        mix(v[1], v[6], v[11], v[12], 0, 0);
+        mix(v[2], v[7], v[8],  v[13], 0, 0);
+        mix(v[3], v[4], v[9],  v[14], 0, 0);
+        // round 6
+        mix(v[0], v[4], v[8],  v[12], 0, 0);
+        mix(v[1], v[5], v[9],  v[13], 0, 0);
+        mix(v[2], v[6], v[10], v[14], 0, 0);
+        mix(v[3], v[7], v[11], v[15], 0, 0);
+        mix(v[0], v[5], v[10], v[15], 0, 0);
+        mix(v[1], v[6], v[11], v[12], 0, 0);
+        mix(v[2], v[7], v[8],  v[13], 0, 0);
+        mix(v[3], v[4], v[9],  v[14], word1, 0);
+        // round 7
+        mix(v[0], v[4], v[8],  v[12], 0, 0);
+        mix(v[1], v[5], v[9],  v[13], word1, 0);
+        mix(v[2], v[6], v[10], v[14], 0, 0);
+        mix(v[3], v[7], v[11], v[15], 0, 0);
+        mix(v[0], v[5], v[10], v[15], 0, 0);
+        mix(v[1], v[6], v[11], v[12], 0, 0);
+        mix(v[2], v[7], v[8],  v[13], 0, 0);
+        mix(v[3], v[4], v[9],  v[14], 0, 0);
+        // round 8
+        mix(v[0], v[4], v[8],  v[12], 0, 0);
+        mix(v[1], v[5], v[9],  v[13], 0, 0);
+        mix(v[2], v[6], v[10], v[14], 0, word1);
+        mix(v[3], v[7], v[11], v[15], 0, 0);
+        mix(v[0], v[5], v[10], v[15], 0, 0);
+        mix(v[1], v[6], v[11], v[12], 0, 0);
+        mix(v[2], v[7], v[8],  v[13], 0, 0);
+        mix(v[3], v[4], v[9],  v[14], 0, 0);
+        // round 9
+        mix(v[0], v[4], v[8],  v[12], 0, 0);
+        mix(v[1], v[5], v[9],  v[13], 0, 0);
+        mix(v[2], v[6], v[10], v[14], 0, 0);
+        mix(v[3], v[7], v[11], v[15], 0, 0);
+        mix(v[0], v[5], v[10], v[15], 0, 0);
+        mix(v[1], v[6], v[11], v[12], 0, 0);
+        mix(v[2], v[7], v[8],  v[13], word1, 0);
+        mix(v[3], v[4], v[9],  v[14], 0, 0);
+        // round 10
+        mix(v[0], v[4], v[8],  v[12], 0, 0);
+        mix(v[1], v[5], v[9],  v[13], 0, 0);
+        mix(v[2], v[6], v[10], v[14], 0, 0);
+        mix(v[3], v[7], v[11], v[15], word1, 0);
+        mix(v[0], v[5], v[10], v[15], 0, 0);
+        mix(v[1], v[6], v[11], v[12], 0, 0);
+        mix(v[2], v[7], v[8],  v[13], 0, 0);
+        mix(v[3], v[4], v[9],  v[14], 0, 0);
+        // round 11
+        mix(v[0], v[4], v[8],  v[12], 0, word1);
+        mix(v[1], v[5], v[9],  v[13], 0, 0);
+        mix(v[2], v[6], v[10], v[14], 0, 0);
+        mix(v[3], v[7], v[11], v[15], 0, 0);
+        mix(v[0], v[5], v[10], v[15], 0, 0);
+        mix(v[1], v[6], v[11], v[12], 0, 0);
+        mix(v[2], v[7], v[8],  v[13], 0, 0);
+        mix(v[3], v[4], v[9],  v[14], 0, 0);
+        // round 12
+        mix(v[0], v[4], v[8],  v[12], 0, 0);
+        mix(v[1], v[5], v[9],  v[13], 0, 0);
+        mix(v[2], v[6], v[10], v[14], 0, 0);
+        mix(v[3], v[7], v[11], v[15], 0, 0);
+        mix(v[0], v[5], v[10], v[15], word1, 0);
+        mix(v[1], v[6], v[11], v[12], 0, 0);
+        mix(v[2], v[7], v[8],  v[13], 0, 0);
+        mix(v[3], v[4], v[9],  v[14], 0, 0);
 
-		// compress v into the blake state; this produces the 50-byte hash
-		// (two Xi values)
-		ulong h[7];
-		h[0] = blake_state_reg[0] ^ v[0] ^ v[8];
-		h[1] = blake_state_reg[1] ^ v[1] ^ v[9];
-		h[2] = blake_state_reg[2] ^ v[2] ^ v[10];
-		h[3] = blake_state_reg[3] ^ v[3] ^ v[11];
-		h[4] = blake_state_reg[4] ^ v[4] ^ v[12];
-		h[5] = blake_state_reg[5] ^ v[5] ^ v[13];
-		h[6] = (blake_state_reg[6] ^ v[6] ^ v[14]) & 0xffff;
+        // compress v into the blake state; this produces the 50-byte hash
+        // (two Xi values)
+        ulong h[7];
+        h[0] = blake_state_reg[0] ^ v[0] ^ v[8];
+        h[1] = blake_state_reg[1] ^ v[1] ^ v[9];
+        h[2] = blake_state_reg[2] ^ v[2] ^ v[10];
+        h[3] = blake_state_reg[3] ^ v[3] ^ v[11];
+        h[4] = blake_state_reg[4] ^ v[4] ^ v[12];
+        h[5] = blake_state_reg[5] ^ v[5] ^ v[13];
+        h[6] = (blake_state_reg[6] ^ v[6] ^ v[14]) & 0xffff;
 
-		// store the two Xi values in the hash table
+        // store the two Xi values in the hash table
         uint            row;
         ulong           xi[4];
 
@@ -215,13 +215,13 @@ void kernel_round0(__global ulong * restrict blake_state,
             uint htOffset = row * NR_SLOTS + cnt;
             ht[htOffset] = (ulong4)(xi[0], xi[1], xi[2],xi[3]);
         }
-	}
+    }
     #pragma unroll 16
     for (uint i = 0; i < (1 << 17); ++i)
         rowCounters[i] = rowCsSrc[i];
 #ifdef ENABLE_DEBUG
-	debug[tid * 2] = 0;
-	debug[tid * 2 + 1] = dropped;
+    debug[tid * 2] = 0;
+    debug[tid * 2 + 1] = dropped;
 #endif
 }
 
@@ -246,8 +246,8 @@ void kernel_round(__global uint * restrict roundNum,
         __global uint   * restrict rowCountersSrc, 
         __global uint   * restrict rowCountersDst)
 {
-    // uint		    dropped_coll = 0;
-    // uint		    dropped_stor = 0;
+    // uint         dropped_coll = 0;
+    // uint         dropped_stor = 0;
     uint            round = *roundNum;
     uint            cntSrc;
     
@@ -415,9 +415,10 @@ void kernel_round(__global uint * restrict roundNum,
 }
 
 void potential_sol(__global ulong ** restrict htabs, __global sols_t * restrict sols,
-        uint ref0, uint ref1, uint * sols_nr, uint * real_sols_nr)
+        uint ref0, uint ref1, uint * sols_nr)
 {
-    uint    values_tmp[1 << PARAM_K];
+    uint    values[1 << PARAM_K];
+    uint    values_tmp[1 << (PARAM_K - 1)];
     uint    nr_value;
     bool    dup_value = 0;
     int     dup_to_watch = -1;
@@ -479,7 +480,7 @@ void potential_sol(__global ulong ** restrict htabs, __global sols_t * restrict 
     __global ulong *ht = htabs[1];
     uint i = nr_value - 1;
     uint j = nr_value * 4 - 1;
-    #pragma ivdep array(values_tmp)
+    #pragma ivdep array(values)
     do {
         uint ins_pre = values_tmp[i];
         uint row = DECODE_ROW(ins_pre);
@@ -496,10 +497,10 @@ void potential_sol(__global ulong ** restrict htabs, __global sols_t * restrict 
         uint z = t1 & 0xffffffff;
         uint w = t1 >> 32;
 
-        values_tmp[j] = w;
-        values_tmp[j - 1] = z;
-        values_tmp[j - 2] = y;
-        values_tmp[j - 3] = x;
+        values[j] = w;
+        values[j - 1] = z;
+        values[j - 2] = y;
+        values[j - 3] = x;
 
         if (dup_to_watch == -1) {
             dup_to_watch = x;
@@ -519,24 +520,19 @@ void potential_sol(__global ulong ** restrict htabs, __global sols_t * restrict 
     if (dup_value)
         return ;
 
-    // test point
-    ++ (*real_sols_nr);
-
     uint sol_i = *sols_nr;
     *sols_nr = sol_i + 1;
     if (sol_i >= MAX_SOLS)
         return ;
     for (uint i = 0; i < (1 << PARAM_K); ++i)
-        sols->values[sol_i][i] = values_tmp[i];
+        sols->values[sol_i][i] = values[i];
 }
 
 __kernel __attribute__((reqd_work_group_size(1, 1, 1)))
 void kernel_sols(__global ulong * restrict ht0,
         __global ulong * restrict ht1, 
         __global sols_t * restrict sols,
-        __global uint * restrict rowCountersSrc,
-        __global uint * restrict counter,
-        __global uint * restrict vaild_counter)
+        __global uint * restrict rowCountersSrc)
 {
     __global ulong  *htabs[2] = { ht0, ht1 };
 
@@ -606,17 +602,10 @@ void kernel_sols(__global ulong * restrict ht0,
         }
     }
 
-    // test point 
-    *counter = collNum;
-    uint real_sols_nr = 0;
-
     uint sols_nr = 0;
     for (uint i = 0; i < tups_num; ++i)
-        potential_sol(htabs, sols, tuples[i][0], tuples[i][1], &sols_nr, &real_sols_nr);
+        potential_sol(htabs, sols, tuples[i][0], tuples[i][1], &sols_nr);
     sols->nr = sols_nr;
-
-    // test point
-    *vaild_counter = real_sols_nr;
 }
 
 
