@@ -833,7 +833,7 @@ unsigned get_value(unsigned *data, unsigned row)
 */
 uint32_t solve_equihash(cl_context ctx, cl_command_queue queue,
     cl_kernel k_round0, cl_kernel k_rounds, 
-    cl_kernel k_sols, cl_mem *buf_ht, cl_mem buf_sols, cl_mem buf_dbg, 
+    cl_mem *buf_ht, cl_mem buf_sols, cl_mem buf_dbg, 
     size_t dbg_size, uint8_t *header, size_t header_len, 
     char do_increment, size_t fixed_nonce_bytes, uint8_t *target, 
     char *job_id, uint32_t *shares, cl_mem *rowCounters)
@@ -876,7 +876,7 @@ uint32_t solve_equihash(cl_context ctx, cl_command_queue queue,
     check_clSetKernelArg(k_round0, 3, &buf_dbg);
     check_clEnqueueNDRangeKernel(queue, k_round0, 1, NULL,
             &global_ws, &local_work_size, 0, NULL, NULL);
-    // round1 ~ round8
+    // round1 ~ round9
     check_clSetKernelArg(k_rounds, 0, &buf_ht[0]);
     check_clSetKernelArg(k_rounds, 1, &buf_ht[1]);
     check_clSetKernelArg(k_rounds, 2, &buf_ht[2]);
@@ -887,6 +887,7 @@ uint32_t solve_equihash(cl_context ctx, cl_command_queue queue,
     check_clSetKernelArg(k_rounds, 7, &buf_ht[7]);
     check_clSetKernelArg(k_rounds, 8, &rowCounters[0]);
     check_clSetKernelArg(k_rounds, 9, &rowCounters[1]);
+    check_clSetKernelArg(k_rounds, 10, &buf_sols);
     check_clEnqueueNDRangeKernel(queue, k_rounds, 1, NULL,
             &global_ws, &local_work_size, 0, NULL, NULL);
     
@@ -895,20 +896,6 @@ uint32_t solve_equihash(cl_context ctx, cl_command_queue queue,
     // uint round = 8;
     // examine_rowCounters(round, queue, rowCounters[1]);
     
-   // final round 
-    check_clSetKernelArg(k_sols, 0, &buf_ht[0]);
-    check_clSetKernelArg(k_sols, 1, &buf_ht[1]);
-    check_clSetKernelArg(k_sols, 2, &buf_ht[2]);
-    check_clSetKernelArg(k_sols, 3, &buf_ht[3]);
-    check_clSetKernelArg(k_sols, 4, &buf_ht[4]);
-    check_clSetKernelArg(k_sols, 5, &buf_ht[5]);
-    check_clSetKernelArg(k_sols, 6, &buf_ht[6]);
-    check_clSetKernelArg(k_sols, 7, &buf_ht[7]);
-    check_clSetKernelArg(k_sols, 8, &buf_sols);
-    check_clSetKernelArg(k_sols, 9, &rowCounters[1]);
-    check_clEnqueueNDRangeKernel(queue, k_sols, 1, NULL,
-            &global_ws, &local_work_size, 0, NULL, NULL);
-
     // compute the expected run time of the kernels that have been queued
     struct timespec start_time, target_time;
     get_time(&start_time);
@@ -1037,7 +1024,7 @@ void mining_parse_job(char *str, uint8_t *target, size_t target_len,
 ** Run in mining mode.
 */
 void mining_mode(cl_context ctx, cl_command_queue queue, cl_kernel k_round0,
-        cl_kernel k_rounds, cl_kernel k_sols, cl_mem *buf_ht, cl_mem buf_sols, 
+        cl_kernel k_rounds, cl_mem *buf_ht, cl_mem buf_sols, 
         cl_mem buf_dbg, size_t dbg_size, uint8_t *header, cl_mem *rowCounters)
 {
     char        line[4096];
@@ -1059,7 +1046,7 @@ void mining_mode(cl_context ctx, cl_command_queue queue, cl_kernel k_round0,
                     header, ZCASH_BLOCK_HEADER_LEN,
                     &fixed_nonce_bytes);
         total += solve_equihash(ctx, queue, k_round0, k_rounds, 
-                k_sols, buf_ht, buf_sols, buf_dbg, dbg_size, header, 
+                buf_ht, buf_sols, buf_dbg, dbg_size, header, 
                 ZCASH_BLOCK_HEADER_LEN, 1, fixed_nonce_bytes, target, 
                 job_id, &shares, rowCounters);
         total_shares += shares;
@@ -1072,8 +1059,7 @@ void mining_mode(cl_context ctx, cl_command_queue queue, cl_kernel k_round0,
 }
 
 void run_opencl(uint8_t *header, size_t header_len, cl_context ctx,
-        cl_command_queue queue, cl_kernel k_round0, cl_kernel k_rounds,
-        cl_kernel k_sols)
+        cl_command_queue queue, cl_kernel k_round0, cl_kernel k_rounds)
 {
     cl_mem      buf_ht[8], buf_sols, buf_dbg, rowCounters[2]; 
     void        *dbg = NULL;
@@ -1103,14 +1089,14 @@ void run_opencl(uint8_t *header, size_t header_len, cl_context ctx,
     rowCounters[0] = check_clCreateBuffer(ctx, CL_MEM_READ_WRITE, NR_ROWS, NULL);
     rowCounters[1] = check_clCreateBuffer(ctx, CL_MEM_READ_WRITE, NR_ROWS, NULL);
     if (mining)
-        mining_mode(ctx, queue, k_round0, k_rounds, k_sols, buf_ht,
+        mining_mode(ctx, queue, k_round0, k_rounds, buf_ht,
                 buf_sols, buf_dbg, dbg_size, header, rowCounters);
     fprintf(stderr, "Running...\n");
     total = 0;
     uint64_t t0 = now();
     for (nonce = 0; nonce < nr_nonce; ++nonce)
         total += solve_equihash(ctx, queue, k_round0, k_rounds, 
-                k_sols, buf_ht, buf_sols, buf_dbg, dbg_size, header, 
+                buf_ht, buf_sols, buf_dbg, dbg_size, header, 
                 header_len, !!nonce, 0, NULL, NULL, NULL, rowCounters);
     uint64_t t1 = now();
     fprintf(stderr, "Total %" PRId64 " solutions in %.1f ms (%.3f Sol/s)\n", 
@@ -1272,17 +1258,13 @@ void init_and_run_opencl(uint8_t *header, size_t header_len)
     cl_kernel k_rounds = clCreateKernel(program, "kernel_round", &status);
     if (status != CL_SUCCESS || !k_rounds)
         fatal("clCreateKernel (%d)\n", status);
-    cl_kernel k_sols = clCreateKernel(program, "kernel_sols", &status);
-    if (status != CL_SUCCESS || !k_sols)
-        fatal("clCreateKernel (%d)\n", status);
     // Run
-    run_opencl(header, header_len, context, queue, k_round0, k_rounds, k_sols);
+    run_opencl(header, header_len, context, queue, k_round0, k_rounds);
     // Release resources
     assert(CL_SUCCESS == 0);
     status = CL_SUCCESS;
     status |= clReleaseKernel(k_round0);
     status |= clReleaseKernel(k_rounds);
-    status |= clReleaseKernel(k_sols);
     status |= clReleaseProgram(program);
     status |= clReleaseCommandQueue(queue);
     status |= clReleaseContext(context);

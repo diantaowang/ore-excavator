@@ -237,6 +237,170 @@ dst.s1 = (src.s1 >> 8) | (src.s2 << (64 - 8)); \
 dst.s2 = (src.s2 >> 8) | (src.s3 << (64 - 8)); \
 dst.s3 = (src.s3 >> 8); \
 
+void potential_sol(__global ulong * restrict htabs[],
+        __global sols_t * restrict sols, uint ref0,
+        uint ref1, uint * sols_nr)
+{
+    uint    values[1 << PARAM_K];
+    uint    values_tmp[1 << (PARAM_K - 1)];
+    uint    nr_value;
+    bool    dup_value = 0;
+    int     dup_to_watch = -1;
+
+    values_tmp[0] = ref0;
+    values_tmp[1] = ref1;
+    nr_value = 2;
+    
+    // k -> the round of load global memory. 
+    for (uint k = PARAM_K - 2; k > 1; --k) {
+        __global ulong *ht = htabs[k];
+        uint i = nr_value - 1;
+        uint j = nr_value * 2 - 1;
+
+        uint table_unit_size = 2;
+        if (k <= 4)
+            table_unit_size = 4;
+
+        #pragma ivdep array(values_tmp)
+        do {
+            uint ins_pre = values_tmp[i];
+            uint row = DECODE_ROW(ins_pre);
+            uint solt0 = DECODE_SLOT0(ins_pre);
+            uint solt1 = DECODE_SLOT1(ins_pre);
+
+            uint rowBase = row * NR_SLOTS * table_unit_size;
+            ulong t0 = ht[rowBase + solt0 * table_unit_size];
+            ulong t1 = ht[rowBase + solt1 * table_unit_size];
+            values_tmp[j] = t1 & 0xffffffff;
+            values_tmp[j - 1] = t0 & 0xffffffff;
+
+            if (!i)
+                break;
+            --i;
+            j -= 2;
+        } while(1);
+        nr_value *= 2;
+    }
+    
+    __global ulong *ht = htabs[1];
+    uint i = nr_value - 1;
+    uint j = nr_value * 4 - 1;
+    #pragma ivdep array(values)
+    do {
+        uint ins_pre = values_tmp[i];
+        uint row = DECODE_ROW(ins_pre);
+        uint solt0 = DECODE_SLOT0(ins_pre);
+        uint solt1 = DECODE_SLOT1(ins_pre);
+        uint rowBase = row * NR_SLOTS * 4;
+        ulong t0 = ht[rowBase + solt0 * 4];
+        ulong t1 = ht[rowBase + solt1 * 4];
+
+        uint x = t0 & 0xffffffff;
+        uint y = t0 >> 32;
+        uint z = t1 & 0xffffffff;
+        uint w = t1 >> 32;
+
+        values[j] = w;
+        values[j - 1] = z;
+        values[j - 2] = y;
+        values[j - 3] = x;
+
+        if (dup_to_watch == -1) {
+            dup_to_watch = x;
+            if (y == x || z == x || w == x)
+                dup_value = 1;
+        } else if (x == dup_to_watch || y == dup_to_watch 
+                || z == dup_to_watch || w == dup_to_watch) {
+            dup_value = 1;
+        }
+
+        if (!i)
+           break;
+        --i;
+        j -= 4;
+    } while(1);
+
+    if (dup_value)
+        return ;
+
+    uint sol_i = *sols_nr;
+    *sols_nr = sol_i + 1;
+    if (sol_i >= MAX_SOLS)
+        return ;
+    for (uint i = 0; i < (1 << PARAM_K); ++i)
+        sols->values[sol_i][i] = values[i];
+}
+
+void find_sols(__global ulong * restrict htabs[],
+        __global sols_t * restrict sols,
+        __local uint * restrict rowCsSrc)
+{
+    uint    tuples[1024][2];
+    ulong   rowHash[NR_SLOTS];
+
+    uint    cnt;
+    bool    load = 1;
+    uint    load_cnt;
+    uint    load_i, load_j;
+    ulong   mask = 0xffffff00000000;
+    uint    tups_num = 0;
+    bool    store;
+    uint    collNum = 0;
+
+    #pragma ivdep array(rowHash)
+    for (uint tid = 0; tid < (1 << 20); ) {
+        if (load) {
+            uint rowIdx = tid >> 3;
+            uint rowOffset = BITS_PER_ROW * (tid & 0x7);
+            cnt = (rowCsSrc[rowIdx] >> rowOffset) & ROW_MASK;
+            if (cnt > NR_ROWS)
+                cnt = NR_ROWS;
+            load_cnt = 0;
+            load_i = 0;
+            load_j = 1;
+            load = 0;
+            store = 1;
+        }
+
+        if (cnt > 1) {
+            if (load_cnt < cnt) {
+                uint htOffset = tid * NR_SLOTS + load_cnt;
+                rowHash[load_cnt++] = htabs[8][htOffset];
+            }
+
+            if (load_cnt > 1 && load_i < cnt -1) {
+                ulong x = rowHash[load_i];
+                ulong y = rowHash[load_j];
+                if ((x & mask) == (y & mask) && store) {
+                    tups_num &= 0x3ff;
+                    tuples[tups_num][0] = x & 0xffffffff;
+                    tuples[tups_num][1] = y & 0xffffffff;
+                    ++tups_num;
+                    store = 0;
+                    ++collNum;  
+                }
+                if (load_j == cnt - 1) {
+                    ++load_i;
+                    load_j = load_i + 1;
+                } else {
+                    ++load_j;
+                }
+            }
+            if (load_i == cnt - 1) {
+                load = 1;
+                ++tid;
+            }
+        } else {
+            load = 1;
+            ++tid;
+        }
+    }
+
+    uint sols_nr = 0;
+    for (uint i = 0; i < tups_num; ++i)
+        potential_sol(htabs, sols, tuples[i][0], tuples[i][1], &sols_nr);
+    sols->nr = sols_nr;
+}
 
 __kernel __attribute__((reqd_work_group_size(1, 1, 1)))
 void kernel_round(__global ulong4 * restrict ht0, 
@@ -248,7 +412,8 @@ void kernel_round(__global ulong4 * restrict ht0,
         __global ulong2 * restrict ht7,
         __global ulong  * restrict ht8,
         __global uint   * restrict rowCountersSrc, 
-        __global uint   * restrict rowCountersDst)
+        __global uint   * restrict rowCountersDst,
+        __global sols_t * restrict sols)
 {
     __global ulong4 * htabs_ul4[] = { ht0, ht1, ht0, ht3, ht4 };
     __global ulong2 * htabs_ul2[] = { ht5, ht6, ht7 };
@@ -427,188 +592,16 @@ void kernel_round(__global ulong4 * restrict ht0,
             }
         }
     }
-    #pragma unroll 16
+    
+    __global ulong * htabs[] = {(__global ulong *)ht0, (__global ulong *)ht1, 
+            (__global ulong *)ht0, (__global ulong *)ht3, (__global ulong *)ht4,
+            (__global ulong *)ht5, (__global ulong *)ht6, (__global ulong *)ht7, 
+            ht8};
+    find_sols(htabs, sols, rowCsDst);
+   
+    // test point
+    /*#pragma unroll 16
     for (uint i = 0; i < (1 << 17); ++i)
-        rowCountersDst[i] = rowCsDst[i];
-}
-
-void potential_sol(__global ulong ** restrict htabs, __global sols_t * restrict sols,
-        uint ref0, uint ref1, uint * sols_nr)
-{
-    uint    values[1 << PARAM_K];
-    uint    values_tmp[1 << (PARAM_K - 1)];
-    uint    nr_value;
-    bool    dup_value = 0;
-    int     dup_to_watch = -1;
-
-    values_tmp[0] = ref0;
-    values_tmp[1] = ref1;
-    nr_value = 2;
-    
-    // k -> the round of load global memory. 
-    for (uint k = PARAM_K - 2; k > 1; --k) {
-        __global ulong *ht = htabs[k];
-        uint i = nr_value - 1;
-        uint j = nr_value * 2 - 1;
-
-        uint table_unit_size = 2;
-        if (k <= 4)
-            table_unit_size = 4;
-
-        #pragma ivdep array(values_tmp)
-        do {
-            uint ins_pre = values_tmp[i];
-            uint row = DECODE_ROW(ins_pre);
-            uint solt0 = DECODE_SLOT0(ins_pre);
-            uint solt1 = DECODE_SLOT1(ins_pre);
-
-            uint rowBase = row * NR_SLOTS * table_unit_size;
-            ulong t0 = ht[rowBase + solt0 * table_unit_size];
-            ulong t1 = ht[rowBase + solt1 * table_unit_size];
-            values_tmp[j] = t1 & 0xffffffff;
-            values_tmp[j - 1] = t0 & 0xffffffff;
-
-            if (!i)
-                break;
-            --i;
-            j -= 2;
-        } while(1);
-        nr_value *= 2;
-    }
-    
-    __global ulong *ht = htabs[1];
-    uint i = nr_value - 1;
-    uint j = nr_value * 4 - 1;
-    #pragma ivdep array(values)
-    do {
-        uint ins_pre = values_tmp[i];
-        uint row = DECODE_ROW(ins_pre);
-        uint solt0 = DECODE_SLOT0(ins_pre);
-        uint solt1 = DECODE_SLOT1(ins_pre);
-        uint rowBase = row * NR_SLOTS * 4;
-        ulong t0 = ht[rowBase + solt0 * 4];
-        ulong t1 = ht[rowBase + solt1 * 4];
-
-        uint x = t0 & 0xffffffff;
-        uint y = t0 >> 32;
-        uint z = t1 & 0xffffffff;
-        uint w = t1 >> 32;
-
-        values[j] = w;
-        values[j - 1] = z;
-        values[j - 2] = y;
-        values[j - 3] = x;
-
-        if (dup_to_watch == -1) {
-            dup_to_watch = x;
-            if (y == x || z == x || w == x)
-                dup_value = 1;
-        } else if (x == dup_to_watch || y == dup_to_watch 
-                || z == dup_to_watch || w == dup_to_watch) {
-            dup_value = 1;
-        }
-
-        if (!i)
-           break;
-        --i;
-        j -= 4;
-    } while(1);
-
-    if (dup_value)
-        return ;
-
-    uint sol_i = *sols_nr;
-    *sols_nr = sol_i + 1;
-    if (sol_i >= MAX_SOLS)
-        return ;
-    for (uint i = 0; i < (1 << PARAM_K); ++i)
-        sols->values[sol_i][i] = values[i];
-}
-
-__kernel __attribute__((reqd_work_group_size(1, 1, 1)))
-void kernel_sols(__global ulong * restrict ht0,
-        __global ulong * restrict ht1, 
-        __global ulong * restrict ht3,
-        __global ulong * restrict ht4,
-        __global ulong * restrict ht5,
-        __global ulong * restrict ht6,
-        __global ulong * restrict ht7,
-        __global ulong * restrict ht8,
-        __global sols_t * restrict sols,
-        __global uint * restrict rowCountersSrc)
-{
-    __global ulong  *htabs[] = { ht0, ht1, ht0, ht3, ht4,
-            ht5, ht6, ht7, ht8};
-
-    __local uint    rowCsSrc[1 << 17];
-    __local uint    tuples[512][2];
-    
-    ulong   rowHash[NR_SLOTS];
-
-    uint    cnt;
-    bool    load = 1;
-    uint    load_cnt;
-    uint    load_i, load_j;
-    ulong   mask = 0xffffff00000000;
-    uint    tups_num = 0;
-    bool    store;
-    uint    collNum = 0;
-    
-    #pragma unroll 16
-    for (uint i = 0; i < (1 << 17); ++i)
-        rowCsSrc[i] = rowCountersSrc[i];
-
-    #pragma ivdep array(rowHash)
-    for (uint tid = 0; tid < (1 << 20); ) {
-        if (load) {
-            uint rowIdx = tid >> 3;
-            uint rowOffset = BITS_PER_ROW * (tid & 0x7);
-            cnt = (rowCsSrc[rowIdx] >> rowOffset) & ROW_MASK;
-            if (cnt > NR_ROWS)
-                cnt = NR_ROWS;
-            load_cnt = 0;
-            load_i = 0;
-            load_j = 1;
-            load = 0;
-            store = 1;
-        }
-
-        if (cnt > 1) {
-            if (load_cnt < cnt) {
-                uint htOffset = tid * NR_SLOTS + load_cnt;
-                rowHash[load_cnt++] = ht8[htOffset];
-            }
-
-            if (load_cnt > 1 && load_i < cnt -1) {
-                ulong x = rowHash[load_i];
-                ulong y = rowHash[load_j];
-                if ((x & mask) == (y & mask) && store) {
-                    tuples[tups_num][0] = x & 0xffffffff;
-                    tuples[tups_num][1] = y & 0xffffffff;
-                    ++tups_num;
-                    store = 0;
-                    ++collNum;  
-                }
-                if (load_j == cnt - 1) {
-                    ++load_i;
-                    load_j = load_i + 1;
-                } else {
-                    ++load_j;
-                }
-            }
-            if (load_i == cnt - 1) {
-                load = 1;
-                ++tid;
-            }
-        } else {
-            load = 1;
-            ++tid;
-        }
-    }
-
-    uint sols_nr = 0;
-    for (uint i = 0; i < tups_num; ++i)
-        potential_sol(htabs, sols, tuples[i][0], tuples[i][1], &sols_nr);
-    sols->nr = sols_nr;
+        rowCountersDst[i] = rowCsDst[i];*/
 }
 
