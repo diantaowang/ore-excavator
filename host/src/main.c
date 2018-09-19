@@ -867,44 +867,45 @@ uint32_t solve_equihash(cl_context ctx, cl_command_queue queue,
     zcash_blake2b_update(&blake, header, 128, 0);
     buf_blake_st = check_clCreateBuffer(ctx, CL_MEM_READ_ONLY |
             CL_MEM_COPY_HOST_PTR, sizeof(blake), &blake);
-    // global_ws = NR_ROWS;
     global_ws = 1;
     local_work_size = 1;
-    for (unsigned round = 0; round < PARAM_K; ++round) {
-        if (verbose > 1)
-            debug("Round %d\n", round);
-        // Now on every round!!!!
-        // init_ht(queue, k_init_ht, rowCounters[round % 2], NULL);
-        if (!round) {
-            check_clSetKernelArg(k_round0, 0, &buf_blake_st);
-            check_clSetKernelArg(k_round0, 1, &buf_ht[round % 2]);
-            check_clSetKernelArg(k_round0, 2, &rowCounters[round % 2]);
-            check_clSetKernelArg(k_round0, 3, &buf_dbg);
-            check_clEnqueueNDRangeKernel(queue, k_round0, 1, NULL,
-                    &global_ws, &local_work_size, 0, NULL, NULL);
-        }
-        else {
-            buf_round = check_clCreateBuffer(ctx, CL_MEM_READ_ONLY |
-                CL_MEM_COPY_HOST_PTR, sizeof(round), &round);
-            check_clSetKernelArg(k_rounds, 0, &buf_round);
-            check_clSetKernelArg(k_rounds, 1, &buf_ht[(round - 1) % 2]);
-            check_clSetKernelArg(k_rounds, 2, &buf_ht[round % 2]);
-            check_clSetKernelArg(k_rounds, 3, &buf_dbg);
-            check_clSetKernelArg(k_rounds, 4, &rowCounters[(round - 1) % 2]);
-            check_clSetKernelArg(k_rounds, 5, &rowCounters[round % 2]);
-            check_clEnqueueNDRangeKernel(queue, k_rounds, 1, NULL,
-                    &global_ws, &local_work_size, 0, NULL, NULL);
-        }
-        // examine_ht(round, queue, buf_ht[round % 2]);
-        examine_dbg(queue, buf_dbg, dbg_size);
-        examine_hashtable(round, queue, buf_ht[round % 2], 8);
-        examine_rowCounters(round, queue, rowCounters[round % 2]);
-    }
-
+    // round0 
+    check_clSetKernelArg(k_round0, 0, &buf_blake_st);
+    check_clSetKernelArg(k_round0, 1, &buf_ht[0]);
+    check_clSetKernelArg(k_round0, 2, &rowCounters[0]);
+    check_clSetKernelArg(k_round0, 3, &buf_dbg);
+    check_clEnqueueNDRangeKernel(queue, k_round0, 1, NULL,
+            &global_ws, &local_work_size, 0, NULL, NULL);
+    // round1 ~ round8
+    check_clSetKernelArg(k_rounds, 0, &buf_ht[0]);
+    check_clSetKernelArg(k_rounds, 1, &buf_ht[1]);
+    check_clSetKernelArg(k_rounds, 2, &buf_ht[2]);
+    check_clSetKernelArg(k_rounds, 3, &buf_ht[3]);
+    check_clSetKernelArg(k_rounds, 4, &buf_ht[4]);
+    check_clSetKernelArg(k_rounds, 5, &buf_ht[5]);
+    check_clSetKernelArg(k_rounds, 6, &buf_ht[6]);
+    check_clSetKernelArg(k_rounds, 7, &buf_ht[7]);
+    check_clSetKernelArg(k_rounds, 8, &rowCounters[0]);
+    check_clSetKernelArg(k_rounds, 9, &rowCounters[1]);
+    check_clEnqueueNDRangeKernel(queue, k_rounds, 1, NULL,
+            &global_ws, &local_work_size, 0, NULL, NULL);
+    
+    // test point
+    // examine_hashtable(round, queue, buf_ht[round % 2], 8);
+    // uint round = 8;
+    // examine_rowCounters(round, queue, rowCounters[1]);
+    
+   // final round 
     check_clSetKernelArg(k_sols, 0, &buf_ht[0]);
     check_clSetKernelArg(k_sols, 1, &buf_ht[1]);
-    check_clSetKernelArg(k_sols, 2, &buf_sols);
-    check_clSetKernelArg(k_sols, 3, &rowCounters[0]);
+    check_clSetKernelArg(k_sols, 2, &buf_ht[2]);
+    check_clSetKernelArg(k_sols, 3, &buf_ht[3]);
+    check_clSetKernelArg(k_sols, 4, &buf_ht[4]);
+    check_clSetKernelArg(k_sols, 5, &buf_ht[5]);
+    check_clSetKernelArg(k_sols, 6, &buf_ht[6]);
+    check_clSetKernelArg(k_sols, 7, &buf_ht[7]);
+    check_clSetKernelArg(k_sols, 8, &buf_sols);
+    check_clSetKernelArg(k_sols, 9, &rowCounters[1]);
     check_clEnqueueNDRangeKernel(queue, k_sols, 1, NULL,
             &global_ws, &local_work_size, 0, NULL, NULL);
 
@@ -1074,7 +1075,7 @@ void run_opencl(uint8_t *header, size_t header_len, cl_context ctx,
         cl_command_queue queue, cl_kernel k_round0, cl_kernel k_rounds,
         cl_kernel k_sols)
 {
-    cl_mem      buf_ht[2], buf_sols, buf_dbg, rowCounters[2]; 
+    cl_mem      buf_ht[8], buf_sols, buf_dbg, rowCounters[2]; 
     void        *dbg = NULL;
 #ifdef ENABLE_DEBUG
     size_t      dbg_size = NR_ROWS * sizeof(debug_t);
@@ -1084,7 +1085,7 @@ void run_opencl(uint8_t *header, size_t header_len, cl_context ctx,
     uint64_t    nonce;
     uint64_t    total;
     if (!mining || verbose)
-        fprintf(stderr, "Hash tables will use %.1f MB\n", 2.0 * HT_SIZE / 1e6);
+        fprintf(stderr, "Hash tables will use %.1f MB\n", 5.75 * HT_SIZE / 1e6);
     // Set up buffers for the host and memory objects for the kernel
     if (!(dbg = calloc(dbg_size, 1)))
         fatal("malloc: %s\n", strerror(errno));
@@ -1092,6 +1093,12 @@ void run_opencl(uint8_t *header, size_t header_len, cl_context ctx,
             CL_MEM_COPY_HOST_PTR, dbg_size, dbg);
     buf_ht[0] = check_clCreateBuffer(ctx, CL_MEM_READ_WRITE, HT_SIZE, NULL);
     buf_ht[1] = check_clCreateBuffer(ctx, CL_MEM_READ_WRITE, HT_SIZE, NULL);
+    buf_ht[2] = check_clCreateBuffer(ctx, CL_MEM_READ_WRITE, HT_SIZE, NULL);
+    buf_ht[3] = check_clCreateBuffer(ctx, CL_MEM_READ_WRITE, HT_SIZE, NULL);
+    buf_ht[4] = check_clCreateBuffer(ctx, CL_MEM_READ_WRITE, HT_SIZE / 2, NULL);
+    buf_ht[5] = check_clCreateBuffer(ctx, CL_MEM_READ_WRITE, HT_SIZE / 2, NULL);
+    buf_ht[6] = check_clCreateBuffer(ctx, CL_MEM_READ_WRITE, HT_SIZE / 2, NULL);
+    buf_ht[7] = check_clCreateBuffer(ctx, CL_MEM_READ_WRITE, HT_SIZE / 4, NULL);
     buf_sols = check_clCreateBuffer(ctx, CL_MEM_READ_WRITE, sizeof(sols_t), NULL);
     rowCounters[0] = check_clCreateBuffer(ctx, CL_MEM_READ_WRITE, NR_ROWS, NULL);
     rowCounters[1] = check_clCreateBuffer(ctx, CL_MEM_READ_WRITE, NR_ROWS, NULL);
@@ -1115,6 +1122,12 @@ void run_opencl(uint8_t *header, size_t header_len, cl_context ctx,
     clReleaseMemObject(buf_sols);
     clReleaseMemObject(buf_ht[0]);
     clReleaseMemObject(buf_ht[1]);
+    clReleaseMemObject(buf_ht[2]);
+    clReleaseMemObject(buf_ht[3]);
+    clReleaseMemObject(buf_ht[4]);
+    clReleaseMemObject(buf_ht[5]);
+    clReleaseMemObject(buf_ht[6]);
+    clReleaseMemObject(buf_ht[7]);
     clReleaseMemObject(rowCounters[0]);
     clReleaseMemObject(rowCounters[1]);
 }

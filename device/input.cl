@@ -239,176 +239,194 @@ dst.s3 = (src.s3 >> 8); \
 
 
 __kernel __attribute__((reqd_work_group_size(1, 1, 1)))
-void kernel_round(__global uint * restrict roundNum,
-        __global ulong4 * restrict ht_src, 
-        __global ulong4 * restrict ht_dst,
-        __global uint   * restrict debug,
+void kernel_round(__global ulong4 * restrict ht0, 
+        __global ulong4 * restrict ht1,
+        __global ulong4 * restrict ht3,
+        __global ulong4 * restrict ht4,
+        __global ulong2 * restrict ht5,
+        __global ulong2 * restrict ht6,
+        __global ulong2 * restrict ht7,
+        __global ulong  * restrict ht8,
         __global uint   * restrict rowCountersSrc, 
         __global uint   * restrict rowCountersDst)
 {
-    // uint         dropped_coll = 0;
-    // uint         dropped_stor = 0;
-    uint            round = *roundNum;
-    uint            cntSrc;
+    __global ulong4 * htabs_ul4[] = { ht0, ht1, ht0, ht3, ht4 };
+    __global ulong2 * htabs_ul2[] = { ht5, ht6, ht7 };
     
+    __global ulong4 * load_ul4;
+    __global ulong2 * load_ul2;
+    __global ulong4 * store_ul4;
+    __global ulong2 * store_ul2;
+
     __local  uint   rowCsSrc[1 << 17]; 
     __local  uint   rowCsDst[1 << 17];
-
-    ulong4          rowHash[NR_SLOTS];
-    ulong4          collision;
-
-    bool load = 1;
-    uint load_num = 0;
-    uint load_i, load_j;
-    uint coll_num;
-
+    
     #pragma unroll 16
     for (uint i = 0; i < (1 << 17); ++i)
-        rowCsSrc[i] = rowCountersSrc[i];
+        rowCsDst[i] = rowCountersSrc[i];
 
-    for (uint i = 0; i < (1 << 17); ++i)
-        rowCsDst[i] = 0;
+    for (uint round = 1; round < PARAM_K; ++round) {
+        #pragma unroll 16
+        for (uint i = 0; i < (1 << 17); ++i)
+            rowCsSrc[i] = rowCsDst[i];
+        #pragma unroll 16
+        for (uint i = 0; i < (1 << 17); ++i)
+            rowCsDst[i] = 0;
+        
+        if (round < 6)
+            load_ul4 = htabs_ul4[round - 1];
+        else
+            load_ul2 = htabs_ul2[round - 6];
+        if (round < 5)
+            store_ul4 = htabs_ul4[round];
+        else if (round < 8)
+            store_ul2 = htabs_ul2[round - 5];
 
-    #pragma ivdep
-    for (uint tid = 0; tid < (1 << 20); ) {
-        if (load) {
-            uint rowIdx = tid >> 3;
-            uint rowOffset = BITS_PER_ROW * (tid & 0x7);
-            uint rowCounter = rowCsSrc[rowIdx];
-            cntSrc = (rowCounter >> rowOffset) & ROW_MASK;
-            if (cntSrc > NR_SLOTS)
-                cntSrc = NR_SLOTS;
-            load_num = 0;
-            load_i = 0;
-            load_j = 1;
-            coll_num = 0;
-            load = 0;
-        }
+        uint    cntSrc;
+        ulong4  rowHash_ul4[NR_SLOTS];
+        ulong2  rowHash_ul2[NR_SLOTS];
+        
+        bool load = 1;
+        uint load_cnt = 0;
+        uint load_i, load_j;
+        uint coll_cnt;
 
-        if (cntSrc > 1) {
-            if (load_num < cntSrc) {
-                uint htOffset = tid * NR_SLOTS + load_num;
-                rowHash[load_num++] = ht_src[htOffset];
+        #pragma ivdep
+        for (uint tid = 0; tid < (1 << 20); ) {
+            if (load) {
+                uint rowIdx = tid >> 3;
+                uint rowOffset = BITS_PER_ROW * (tid & 0x7);
+                uint rowCounter = rowCsSrc[rowIdx];
+                cntSrc = (rowCounter >> rowOffset) & ROW_MASK;
+                if (cntSrc > NR_SLOTS)
+                    cntSrc = NR_SLOTS;
+                load_cnt = 0;
+                load_i = 0;
+                load_j = 1;
+                coll_cnt = 0;
+                load = 0;
             }
-
-            bool store;
-           
-            // Is "coll_num < COLL_DATA_SIZE_PER_TH" must ?
-            if (load_num > 1 && load_i < cntSrc - 1 && coll_num < COLL_DATA_SIZE_PER_TH) {
-                uint idx;
-                uint newIndex = ENCODE_INPUTS(tid, load_i, load_j);
-                ulong4 x = rowHash[load_i];
-                ulong4 y = rowHash[load_j];
-                ulong4 collResult = x ^ y;
-                
-                if (!(round & 0x1)) {
-                    collResult.s1 = (collResult.s1 >> 8) | (collResult.s2 << (64 - 8));
-                    collResult.s2 = (collResult.s2 >> 8) | (collResult.s3 << (64 - 8));
-                    collResult.s3 = (collResult.s3 >> 8);
-                }
-
-                store = 0;
-                if (round == 1 || round == 2) {
-                    idx = collResult.s1 & 0xffffffff;
-                    if (collResult.s1 || collResult.s2 || collResult.s3)
-                        store = 1;
-                } else if (round == 3 || round == 4) {
-                    idx = (collResult.s1 >> 32);
-                    if ((collResult.s1 & 0xffffffff00000000) || collResult.s2 || collResult.s3)
-                        store = 1;
-                } else if (round == 5 || round == 6) {
-                    idx = collResult.s2 & 0xffffffff;
-                    if (collResult.s2 || collResult.s3)
-                        store = 1;
-                } else if (round == 7 || round == 8) {
-                    idx = (collResult.s2 >> 32);
-                    if ((collResult.s2 & 0xffffffff00000000) || collResult.s3)
-                        store = 1;
-                }
-                
-                if (store) {
-                    if (round & 0x1) {
-                        collResult.s1 = (collResult.s1 >> 16) | (collResult.s2 << (64 - 16));
-                        collResult.s2 = (collResult.s2 >> 16) | (collResult.s3 << (64 - 16));
-                        collResult.s3 = (collResult.s3 >> 16);
-                    } else {
-                        collResult.s3 = (collResult.s3 << 16) | (collResult.s2 >> (64 - 16));
-                        collResult.s2 = (collResult.s2 << 16) | (collResult.s1 >> (64 - 16));
-                        collResult.s1 = (collResult.s1 << 16);
-                    }
-                    
-                    if (round == 1) {
-                        uint i = x.s0 & 0xffffffff;
-                        uint j = y.s0 & 0xffffffff;
-                        collision = collResult;
-                        collision.s0 = (ulong) i << 32 | j;
-                    }           
-
-                    uint row; 
-                    if (round & 0x1)
-                        row = ((idx & 0xf0000) >> 0) |
-                            ((idx & 0xf00) << 4) | ((idx & 0xf00000) >> 12) |
-                            ((idx & 0xf) << 4) | ((idx & 0xf000) >> 12);
+            if (cntSrc > 1) {
+                if (load_cnt < cntSrc) {
+                    uint htOffset = tid * NR_SLOTS + load_cnt;
+                    if (round < 6)
+                        rowHash_ul4[load_cnt++] = load_ul4[htOffset];
                     else 
-                        row = (idx & 0xffff) | ((idx & 0xf00000) >> 4);
+                        rowHash_ul2[load_cnt++] = load_ul2[htOffset];
+                }
+                
+                bool store;
+                // Is "coll_cnt < COLL_DATA_SIZE_PER_TH" must ?
+                if (load_cnt > 1 && load_i < cntSrc - 1 && coll_cnt < COLL_DATA_SIZE_PER_TH) {
+                    uint newIndex = ENCODE_INPUTS(tid, load_i, load_j);
+                    ulong4 x_ul4, y_ul4, collResult_ul4;
+                    ulong2 x_ul2, y_ul2, collResult_ul2;
+                    if (round < 6) {
+                        x_ul4 = rowHash_ul4[load_i];
+                        y_ul4 = rowHash_ul4[load_j];
+                        collResult_ul4 = x_ul4 ^ y_ul4;
+                    } else {
+                        x_ul2 = rowHash_ul2[load_i];
+                        y_ul2 = rowHash_ul2[load_j];
+                        collResult_ul2 = x_ul2 ^ y_ul2;
+                        collResult_ul4.s0 = collResult_ul2.s0;
+                        collResult_ul4.s1 = collResult_ul2.s1;
+                        collResult_ul4.s2 = 0;
+                        collResult_ul4.s3 = 0;
+                    }
                     
-                    uint rowIdx = row >> 3;
-                    uint rowOffset = BITS_PER_ROW * (row & 0x7);
-                    uint xcnt = atom_add(rowCsDst + rowIdx, 1 << rowOffset);
-                    uint cnt = (xcnt >> rowOffset) & ROW_MASK;
-                    ulong4 oldColl = 0;
-                    uint htOffset = row * NR_SLOTS + cnt;
-                    if (round != 1 && round != 2)
-                        oldColl = ht_dst[htOffset];
-                    if (round == 2 || round == 3) {
-                        collision.s0 = oldColl.s0;
-                        collision.s1 = (collResult.s1 & 0xffffffff00000000) | newIndex;
-                        collision.s2 = collResult.s2;
-                        collision.s3 = collResult.s3;
-                    } else if (round == 4 || round == 5) {
-                        collision.s0 = oldColl.s0;
-                        collision.s1 = ((ulong) newIndex << 32) | (oldColl.s1 & 0xffffffff);
-                        collision.s2 = collResult.s2;
-                        collision.s3 = collResult.s3;
-                    
-                    } else if (round == 6 || round == 7) {
-                        collision.s0 = oldColl.s0;
-                        collision.s1 = oldColl.s1;
-                        collision.s2 = (collResult.s2 & 0xffffffff00000000) | newIndex;
-                        collision.s3 = collResult.s3;
-                    
-                    } else if (round == 8) {
-                        collision.s0 = oldColl.s0;
-                        collision.s1 = oldColl.s1;
-                        // collision.s2 has 4 bytes garbage data in high position.
-                        collision.s2 = oldColl.s2;
-                        collision.s3 = (collResult.s3 << 32) | newIndex;
+                    // right shift the padding of 8 bits.
+                    if (!(round & 0x1)) {
+                        collResult_ul4.s0 = (collResult_ul4.s0 >> 8) | (collResult_ul4.s1 << (64 - 8));
+                        collResult_ul4.s1 = (collResult_ul4.s1 >> 8) | (collResult_ul4.s2 << (64 - 8));
+                        collResult_ul4.s2 = (collResult_ul4.s2 >> 8) | (collResult_ul4.s3 << (64 - 8));
+                        collResult_ul4.s3 = (collResult_ul4.s3 >> 8);
                     }
 
-                    if (cnt >= NR_SLOTS)
-                        atom_sub(rowCsDst + rowIdx, 1 << rowOffset);
-                    else
-                        ht_dst[htOffset] = collision;
-                }
+                    uint idx;
+                    ulong4 storeResult_ul4;
+                    store = 0;
+                    if (round == 1) {
+                        idx = collResult_ul4.s1 & 0xffffffff;
+                        if (collResult_ul4.s1 || collResult_ul4.s2 || collResult_ul4.s3)
+                            store = 1;
+                        uint i = x_ul4.s0 & 0xffffffff;
+                        uint j = y_ul4.s0 & 0xffffffff;
+                        // right shift 16 bits
+                        storeResult_ul4.s0 = (ulong) i << 32 | j;
+                        storeResult_ul4.s1 = (collResult_ul4.s1 >> 16) | (collResult_ul4.s2 << (64 - 16)); 
+                        storeResult_ul4.s2 = (collResult_ul4.s2 >> 16) | (collResult_ul4.s3 << (64 - 16)); 
+                        storeResult_ul4.s3 = (collResult_ul4.s3 >> 16); 
+                    } else if (round == 2) {
+                        idx = collResult_ul4.s1 & 0xffffffff;
+                        if (collResult_ul4.s1 || collResult_ul4.s2 || collResult_ul4.s3)
+                            store = 1;
+                        storeResult_ul4.s0 = (collResult_ul4.s1 << 16) & 0xffffffff00000000;
+                        storeResult_ul4.s0 |= newIndex;
+                        storeResult_ul4.s1 = (collResult_ul4.s1 >> 48) | (collResult_ul4.s2 << 16); 
+                        storeResult_ul4.s2 = (collResult_ul4.s2 >> 48) | (collResult_ul4.s3 << 16);
+                    } else {
+                        idx = collResult_ul4.s0 >> 32;
+                        if ((collResult_ul4.s0 >> 32) || collResult_ul4.s1 || collResult_ul4.s2)
+                            store = 1;
+                        storeResult_ul4.s0 = (collResult_ul4.s0 >> 16) | (collResult_ul4.s1 << (64 - 16));
+                        storeResult_ul4.s1 = (collResult_ul4.s1 >> 16) | (collResult_ul4.s2 << (64 - 16)); 
+                        storeResult_ul4.s2 = (collResult_ul4.s2 >> 16); 
+                        storeResult_ul4.s3 = 0;
+                        storeResult_ul4.s0 &= 0xffffffff00000000;
+                        storeResult_ul4.s0 |= newIndex;
+                    }
 
-                if (load_j == cntSrc - 1) {
-                    ++load_i;
-                    load_j = load_i + 1;
-                } else {
-                    ++load_j;
+                    // only store = 1, we store new data.
+                    if (store) {
+                        uint row; 
+                        if (round & 0x1)
+                            row = ((idx & 0xf0000) >> 0) |
+                                ((idx & 0xf00) << 4) | ((idx & 0xf00000) >> 12) |
+                                ((idx & 0xf) << 4) | ((idx & 0xf000) >> 12);
+                        else 
+                            row = (idx & 0xffff) | ((idx & 0xf00000) >> 4);
+                        
+                        uint rowIdx = row >> 3;
+                        uint rowOffset = BITS_PER_ROW * (row & 0x7);
+                        uint xcnt = atom_add(rowCsDst + rowIdx, 1 << rowOffset);
+                        uint cnt = (xcnt >> rowOffset) & ROW_MASK;
+                        uint htOffset = row * NR_SLOTS + cnt;
+                        
+                        if (cnt >= NR_SLOTS)
+                            atom_sub(rowCsDst + rowIdx, 1 << rowOffset);
+                        else {
+                            if (round < 5)
+                                store_ul4[htOffset] = storeResult_ul4;
+                            else if (round < 8) {
+                                ulong2 t;
+                                t.s0 = storeResult_ul4.s0;
+                                t.s1 = storeResult_ul4.s1;
+                                store_ul2[htOffset] = t;
+                            }
+                            else
+                                ht8[htOffset] = storeResult_ul4.s0;
+                        }
+                    }
+
+                    if (load_j == cntSrc - 1) {
+                        ++load_i;
+                        load_j = load_i + 1;
+                    } else {
+                        ++load_j;
+                    }
+                    ++coll_cnt;
                 }
-                ++coll_num;
-            }
-            if (load_i == cntSrc - 1 || coll_num == COLL_DATA_SIZE_PER_TH) {
+                if (load_i == cntSrc - 1 || coll_cnt == COLL_DATA_SIZE_PER_TH) {
+                    load = 1;
+                    ++tid;
+                }  
+            } else {
                 load = 1;
                 ++tid;
-            }  
-        } else {
-            load = 1;
-            ++tid;
+            }
         }
     }
-
     #pragma unroll 16
     for (uint i = 0; i < (1 << 17); ++i)
         rowCountersDst[i] = rowCsDst[i];
@@ -429,21 +447,13 @@ void potential_sol(__global ulong ** restrict htabs, __global sols_t * restrict 
     
     // k -> the round of load global memory. 
     for (uint k = PARAM_K - 2; k > 1; --k) {
-        __global ulong *ht = htabs[k & 0x1];
+        __global ulong *ht = htabs[k];
         uint i = nr_value - 1;
         uint j = nr_value * 2 - 1;
-        uint offset;
-        bool lowHalf;
-        if (k ==2 || k == 3) {
-            offset = 1;
-            lowHalf = 1;
-        } else if (k == 4 || k == 5) {
-            offset = 1;
-            lowHalf = 0;
-        } else if (k == 6 || k == 7) {
-            offset = 2;
-            lowHalf = 1;
-        }
+
+        uint table_unit_size = 2;
+        if (k <= 4)
+            table_unit_size = 4;
 
         #pragma ivdep array(values_tmp)
         do {
@@ -452,22 +462,11 @@ void potential_sol(__global ulong ** restrict htabs, __global sols_t * restrict 
             uint solt0 = DECODE_SLOT0(ins_pre);
             uint solt1 = DECODE_SLOT1(ins_pre);
 
-            uint rowBase = row * NR_SLOTS * 4;
-
-            ulong t0 = ht[rowBase + solt0 * 4 + offset];
-            ulong t1 = ht[rowBase + solt1 * 4 + offset];
-
-            uint x, y;
-            if (lowHalf) {
-                x = t0 & 0xffffffff;
-                y = t1 & 0xffffffff; 
-            } else {
-                x = t0 >> 32;
-                y = t1 >> 32;
-            }
-
-            values_tmp[j] = y;
-            values_tmp[j - 1] = x;
+            uint rowBase = row * NR_SLOTS * table_unit_size;
+            ulong t0 = ht[rowBase + solt0 * table_unit_size];
+            ulong t1 = ht[rowBase + solt1 * table_unit_size];
+            values_tmp[j] = t1 & 0xffffffff;
+            values_tmp[j - 1] = t0 & 0xffffffff;
 
             if (!i)
                 break;
@@ -486,9 +485,7 @@ void potential_sol(__global ulong ** restrict htabs, __global sols_t * restrict 
         uint row = DECODE_ROW(ins_pre);
         uint solt0 = DECODE_SLOT0(ins_pre);
         uint solt1 = DECODE_SLOT1(ins_pre);
-
         uint rowBase = row * NR_SLOTS * 4;
-
         ulong t0 = ht[rowBase + solt0 * 4];
         ulong t1 = ht[rowBase + solt1 * 4];
 
@@ -531,10 +528,17 @@ void potential_sol(__global ulong ** restrict htabs, __global sols_t * restrict 
 __kernel __attribute__((reqd_work_group_size(1, 1, 1)))
 void kernel_sols(__global ulong * restrict ht0,
         __global ulong * restrict ht1, 
+        __global ulong * restrict ht3,
+        __global ulong * restrict ht4,
+        __global ulong * restrict ht5,
+        __global ulong * restrict ht6,
+        __global ulong * restrict ht7,
+        __global ulong * restrict ht8,
         __global sols_t * restrict sols,
         __global uint * restrict rowCountersSrc)
 {
-    __global ulong  *htabs[2] = { ht0, ht1 };
+    __global ulong  *htabs[] = { ht0, ht1, ht0, ht3, ht4,
+            ht5, ht6, ht7, ht8};
 
     __local uint    rowCsSrc[1 << 17];
     __local uint    tuples[512][2];
@@ -543,7 +547,7 @@ void kernel_sols(__global ulong * restrict ht0,
 
     uint    cnt;
     bool    load = 1;
-    uint    load_num;
+    uint    load_cnt;
     uint    load_i, load_j;
     ulong   mask = 0xffffff00000000;
     uint    tups_num = 0;
@@ -562,7 +566,7 @@ void kernel_sols(__global ulong * restrict ht0,
             cnt = (rowCsSrc[rowIdx] >> rowOffset) & ROW_MASK;
             if (cnt > NR_ROWS)
                 cnt = NR_ROWS;
-            load_num = 0;
+            load_cnt = 0;
             load_i = 0;
             load_j = 1;
             load = 0;
@@ -570,12 +574,12 @@ void kernel_sols(__global ulong * restrict ht0,
         }
 
         if (cnt > 1) {
-            if (load_num < cnt) {
-                uint htOffset = (tid * NR_SLOTS + load_num) * 4 + 3;
-                rowHash[load_num++] = ht0[htOffset];
+            if (load_cnt < cnt) {
+                uint htOffset = tid * NR_SLOTS + load_cnt;
+                rowHash[load_cnt++] = ht8[htOffset];
             }
 
-            if (load_num > 1 && load_i < cnt -1) {
+            if (load_cnt > 1 && load_i < cnt -1) {
                 ulong x = rowHash[load_i];
                 ulong y = rowHash[load_j];
                 if ((x & mask) == (y & mask) && store) {
@@ -607,6 +611,4 @@ void kernel_sols(__global ulong * restrict ht0,
         potential_sol(htabs, sols, tuples[i][0], tuples[i][1], &sols_nr);
     sols->nr = sols_nr;
 }
-
-
 

@@ -55,7 +55,7 @@ CXX := g++
 
 # Target
 TARGET := sa-solver
-TARGET_DIR := bin
+TARGET_DIR := emu-bin
 
 # Directories
 INC_DIRS := 
